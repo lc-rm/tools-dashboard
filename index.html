@@ -458,15 +458,58 @@ function getHost(url) {
   }
 }
 
-function getFaviconUrl(url, size) {
+// 複数のファビコン取得サービスを順番に試す
+// favicon.im → DuckDuckGo → Google s2 の順
+function getFaviconSources(url, size) {
   const host = getHost(url);
-  if (!host) return '';
-  return 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(host) + '&sz=' + size;
+  if (!host) return [];
+  return [
+    // 1. favicon.im (404を返してくれるので失敗判定が確実)
+    `https://favicon.im/${encodeURIComponent(host)}?larger=true`,
+    // 2. DuckDuckGo（サブドメインに強い）
+    `https://icons.duckduckgo.com/ip3/${encodeURIComponent(host)}.ico`,
+    // 3. Google s2（最終フォールバック）
+    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=${size}`,
+  ];
+}
+
+// 互換性のため残す（プレビュー機能で使用）
+function getFaviconUrl(url, size) {
+  const sources = getFaviconSources(url, size);
+  return sources[0] || '';
 }
 
 function getInitial(name) {
   if (!name) return '?';
   return name.trim().charAt(0).toUpperCase();
+}
+
+// ファビコン取得を試行。失敗時は頭文字にフォールバック
+function loadFaviconWithFallback(imgElement, url, size, onFinalFallback) {
+  const sources = getFaviconSources(url, size);
+  let attemptIndex = 0;
+
+  const tryNext = () => {
+    if (attemptIndex >= sources.length) {
+      if (onFinalFallback) onFinalFallback();
+      return;
+    }
+    imgElement.src = sources[attemptIndex];
+    attemptIndex++;
+  };
+
+  imgElement.onerror = () => {
+    tryNext();
+  };
+
+  imgElement.onload = () => {
+    // Google s2の「デフォルト地球アイコン」検出 (16x16以下の小さい画像)
+    if (imgElement.naturalWidth > 0 && imgElement.naturalWidth < 16) {
+      tryNext();
+    }
+  };
+
+  tryNext();
 }
 
 function charImg(charSrc, size) {
@@ -498,15 +541,16 @@ function createIconElement(tool, size) {
   const wrap = document.createElement('div');
   wrap.className = size === 'card' ? 'card-icon-wrap' : 'list-item-icon';
   const img = document.createElement('img');
-  img.src = getFaviconUrl(tool.url, size === 'card' ? 64 : 32);
   img.alt = '';
-  img.onerror = function() {
+  wrap.appendChild(img);
+
+  loadFaviconWithFallback(img, tool.url, size === 'card' ? 64 : 32, () => {
     const fb = document.createElement('div');
     fb.className = size === 'card' ? 'card-icon-fallback' : 'list-item-icon-fallback';
     fb.textContent = getInitial(tool.name);
     wrap.replaceWith(fb);
-  };
-  wrap.appendChild(img);
+  });
+
   return wrap;
 }
 
@@ -829,8 +873,10 @@ function createForm() {
     if (host) {
       preview.style.display = 'flex';
       const img = document.createElement('img');
-      img.src = getFaviconUrl(url, 64);
-      img.onerror = () => {
+      thumb.appendChild(img);
+
+      loadFaviconWithFallback(img, url, 64, () => {
+        // 全サービスで失敗 → 頭文字表示
         thumb.innerHTML = '';
         const fb = document.createElement('div');
         fb.style.fontSize = '18px';
@@ -839,11 +885,17 @@ function createForm() {
         fb.textContent = getInitial(form.name);
         thumb.appendChild(fb);
         text.textContent = host + ' （アイコンが見つからないため、頭文字を表示します）';
+      });
+
+      // 成功時のテキスト更新（loadFaviconWithFallback内のonloadが先に走る場合用）
+      const origOnload = img.onload;
+      img.onload = function() {
+        if (origOnload) origOnload.call(this);
+        // 成功して画像が表示されたら（小さすぎないもの）
+        if (img.naturalWidth >= 16) {
+          text.textContent = host + ' のアイコンを取得しました';
+        }
       };
-      img.onload = () => {
-        text.textContent = host + ' のアイコンを取得しました';
-      };
-      thumb.appendChild(img);
     } else {
       preview.style.display = 'none';
     }
