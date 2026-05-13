@@ -4,6 +4,14 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>こあらのどうぐばこ</title>
+<!-- ファビコン -->
+<link rel="icon" type="image/x-icon" href="favicon.ico" />
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png" />
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+<link rel="icon" type="image/png" sizes="48x48" href="favicon-48.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+<meta name="theme-color" content="#2BA89A" />
 <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@300;400;500;700;800&display=swap" rel="stylesheet" />
 <style>
   :root {
@@ -171,9 +179,16 @@
     display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
   }
   .card-foot { display: flex; justify-content: space-between; align-items: center; padding-top: 10px; border-top: 1px solid #F0EDE6; gap: 8px; }
-  .card-link { color: var(--teal); font-weight: 700; font-size: 12px; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; transition: gap 0.2s; min-width: 0; }
+  .card-link { color: var(--teal); font-weight: 700; font-size: 12px; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; transition: gap 0.2s; min-width: 0; flex: 1; }
   .card-link:hover { gap: 7px; }
   .card-link-host { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+  .copy-btn {
+    width: 28px; height: 28px; border-radius: 8px; background: var(--teal-soft);
+    color: var(--teal); display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all 0.2s; flex-shrink: 0;
+  }
+  .copy-btn:hover { background: var(--teal); color: white; transform: scale(1.08); }
+  .copy-btn.copied { background: var(--teal); color: white; }
   .card-empty { color: var(--gray-light); font-size: 11px; font-style: italic; }
   .card-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.2s; flex-shrink: 0; }
   .card:hover .card-actions { opacity: 1; }
@@ -560,6 +575,7 @@ const ICONS = {
   external: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
   plus: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
   check: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+  copy: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
 };
 
 // ========== 認証 ==========
@@ -741,6 +757,18 @@ function createCard(tool, idx) {
     a.appendChild(span);
     a.insertAdjacentHTML('beforeend', ICONS.external);
     foot.appendChild(a);
+
+    // コピーボタン
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'copy-btn';
+    copyBtn.title = 'URLをコピー';
+    copyBtn.innerHTML = ICONS.copy;
+    copyBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      copyToClipboard(tool.url, copyBtn);
+    };
+    foot.appendChild(copyBtn);
   } else {
     const empty = document.createElement('span');
     empty.className = 'card-empty';
@@ -960,6 +988,39 @@ function showToast(msg, type) {
   t.appendChild(span);
   c.appendChild(t);
   setTimeout(() => t.remove(), 2200);
+}
+
+async function copyToClipboard(text, btnElement) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('URLをコピーしました！', 'success');
+    // ボタンを一時的にチェックマーク状態に
+    if (btnElement) {
+      const originalHTML = btnElement.innerHTML;
+      btnElement.innerHTML = ICONS.check;
+      btnElement.classList.add('copied');
+      setTimeout(() => {
+        btnElement.innerHTML = originalHTML;
+        btnElement.classList.remove('copied');
+      }, 1500);
+    }
+  } catch (err) {
+    // フォールバック（古いブラウザ用）
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      showToast('URLをコピーしました！', 'success');
+    } catch (e) {
+      console.error('Copy failed:', e);
+      showToast('コピーに失敗しました', 'error');
+    }
+  }
 }
 
 // ========== 画面切り替え ==========
