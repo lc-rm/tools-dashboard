@@ -474,7 +474,6 @@ function getHost(url) {
 }
 
 // 複数のファビコン取得サービスを順番に試す
-// favicon.im → DuckDuckGo → Google s2 の順
 function getFaviconSources(url, size) {
   const host = getHost(url);
   if (!host) return [];
@@ -488,6 +487,64 @@ function getFaviconSources(url, size) {
   ];
 }
 
+// URLのHTMLを取得して<link rel="icon">を解析（サブパス対応）
+// 結果はキャッシュしてリクエスト数を減らす
+const faviconCache = new Map();
+const faviconInflight = new Map();
+
+async function findFaviconFromHtml(pageUrl) {
+  // キャッシュチェック
+  if (faviconCache.has(pageUrl)) {
+    return faviconCache.get(pageUrl);
+  }
+  // 進行中のリクエストがあれば共有
+  if (faviconInflight.has(pageUrl)) {
+    return faviconInflight.get(pageUrl);
+  }
+
+  const promise = (async () => {
+    try {
+      // CORS対応プロキシ経由でHTMLを取得
+      const proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(pageUrl);
+      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) throw new Error('proxy failed');
+      const data = await res.json();
+      const html = data.contents || '';
+
+      // <link rel="icon" ...> または <link rel="shortcut icon" ...> を探す
+      // sizes が大きい順に優先
+      const linkRegex = /<link\s+[^>]*rel=["']?(?:shortcut\s+)?icon["']?[^>]*>/gi;
+      const matches = html.match(linkRegex) || [];
+
+      const candidates = [];
+      for (const tag of matches) {
+        const hrefMatch = tag.match(/href=["']([^"']+)["']/i);
+        if (!hrefMatch) continue;
+        const sizesMatch = tag.match(/sizes=["']([^"']+)["']/i);
+        const sizeNum = sizesMatch ? parseInt(sizesMatch[1]) || 0 : 0;
+        // 相対URLを絶対URLに変換
+        const absoluteUrl = new URL(hrefMatch[1], pageUrl).href;
+        candidates.push({ url: absoluteUrl, size: sizeNum });
+      }
+
+      // 大きいサイズ優先で返す
+      candidates.sort((a, b) => b.size - a.size);
+      const result = candidates.length > 0 ? candidates[0].url : null;
+      faviconCache.set(pageUrl, result);
+      return result;
+    } catch (err) {
+      console.warn('findFaviconFromHtml failed for', pageUrl, err);
+      faviconCache.set(pageUrl, null);
+      return null;
+    } finally {
+      faviconInflight.delete(pageUrl);
+    }
+  })();
+
+  faviconInflight.set(pageUrl, promise);
+  return promise;
+}
+
 // 互換性のため残す（プレビュー機能で使用）
 function getFaviconUrl(url, size) {
   const sources = getFaviconSources(url, size);
@@ -499,17 +556,25 @@ function getInitial(name) {
   return name.trim().charAt(0).toUpperCase();
 }
 
-// ファビコン取得を試行。失敗時は頭文字にフォールバック
-function loadFaviconWithFallback(imgElement, url, size, onFinalFallback) {
+// ファビコン取得を試行（4段階フォールバック）
+// 1. HTMLから直接<link rel="icon">を取得（サブパス対応）
+// 2. favicon.im
+// 3. DuckDuckGo
+// 4. Google s2
+// すべて失敗 → 頭文字フォールバック
+async function loadFaviconWithFallback(imgElement, url, size, onFinalFallback) {
+  // まずHTMLから直接取得を試みる（サブパス対応）
+  const htmlFavicon = await findFaviconFromHtml(url);
   const sources = getFaviconSources(url, size);
+  const allSources = htmlFavicon ? [htmlFavicon, ...sources] : sources;
   let attemptIndex = 0;
 
   const tryNext = () => {
-    if (attemptIndex >= sources.length) {
+    if (attemptIndex >= allSources.length) {
       if (onFinalFallback) onFinalFallback();
       return;
     }
-    imgElement.src = sources[attemptIndex];
+    imgElement.src = allSources[attemptIndex];
     attemptIndex++;
   };
 
